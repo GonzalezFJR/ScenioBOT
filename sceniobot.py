@@ -8,7 +8,7 @@ MISIONS = 'misions.txt'
 STATE = 'state.json'
 LOGFILE = 'log.txt'
 
-TOKEN = 'token.txt'
+TOKEN = 'token_test.txt'
 MASTER = 574837872
 
 
@@ -215,6 +215,7 @@ class GameUpdate:
         ''' Produce un intercambio de obj por un random... return de ese random ''' 
         with open(STATE, 'r') as f: state = json.load(f)
         # A → B → C → … → W → X → Y → …
+        As = GetAssasinsOf(obj)
         X = random.choice([name for name in state if state[name]['status'] and name != obj])
         Y = state[X]['objetivo']
         Ws = GetAssasinsOf(X)
@@ -468,6 +469,7 @@ class GameUpdate:
         for ass in assasins:
             if not state[ass]['status']: continue
             state[ass]['objetivo'] = state[name]['objetivo']
+            self.Msg(ass, f'ATENCIÓN - Tu objetivo {name} se ha retirado... tienes un nuevo objetivo: {state[name]["objetivo"]}')
             Log(f"{ass} hereda el objetivo de {name}", type='EVT')
         with open(STATE, 'w') as f: json.dump(state, f)
         self.Msg(name, f"Gracias por haber participado, {name}. Siento mucho que te vayas... espero que hayas disfrutado del juego.")
@@ -490,6 +492,10 @@ class GameUpdate:
         Log(f"{name} ha usado un comodín. Le quedan {state[name]['n_mision_joker']} comodines", type='EVT')
         self.Msg(name, f"Has usado un comodín. Te quedan {state[name]['n_mision_joker']} comodines. Tu nueva misión es:")
         self.Msg(name, state[name]['mision'])
+        card_name = GenerateCard(name)
+        time.sleep(0.5)
+        self.Img(name, card_name)
+        time.sleep(0.5)
         return True
 
     def InformEveryone(self, extramsg=None):
@@ -679,7 +685,10 @@ class ScenioBot:
     command =  msg['text'].lower().replace(' ', '')
     name = self.bot.getChat(chat_id)['first_name']
     Log(f'Got command: {command}', type='CMD', name=name)
+    self.interpret(chat_id, command_orig, command)
 
+  def interpret(self, chat_id, command_orig, command):
+    name = self.bot.getChat(chat_id)['first_name']
     if command in ['/start', 'start']:
         alreadyInList = AddPart(chat_id, name)
         if not alreadyInList:
@@ -732,6 +741,10 @@ class ScenioBot:
         else:
             if state[name]['status']:
                 self.sendMsg(chat_id, CraftMisionMsg(name))
+                card_name = GenerateCard(name)
+                time.sleep(0.5)
+                self.game.Img(name, card_name)
+                time.sleep(0.5)
             else:
                 self.sendMsg(chat_id, "Estás muerto")
         time.sleep(0.5)
@@ -745,14 +758,27 @@ class ScenioBot:
     # Comandos privaods
     ################################################################
     if chat_id == self.master:
+        if command.startswith('pretend'):
+            parts = command_orig.split(' ')
+            if len(parts) < 3: return
+            name = parts[1]
+            chat_id = GetPartID(name)
+            com = parts[2:]
+            com = ' '.join(com)
+            command =  com.lower().replace(' ', '')
+            Log(f'Pretending commad for {name}: {com}', type='CMD', name=name)
+            self.interpret(chat_id, com, command)
+            time.sleep(0.5)
+            # XXX
+
         # Comando para mostrar la lista de participantes
-        if command in ['list', 'lista', 'participantes']:
+        elif command in ['list', 'lista', 'participantes']:
             with open(PART_LIST, 'r') as f:
                 part_list = json.load(f)
-            msg = 'Lista de participantes:\n'
+            mssg = 'Lista de participantes:\n'
             for ID in part_list:
-                msg += f'{part_list[ID]} ({ID})\n'
-            self.sendMaster(msg)
+                mssg += f'{part_list[ID]} ({ID})\n'
+            self.sendMaster(mssg)
             time.sleep(0.5)
 
         # Comando para mostrar la info de un jugador
@@ -771,9 +797,9 @@ class ScenioBot:
 
         # Comando para enviar notificaciones a todos los participantes
         elif command.startswith('msgall'):
-            msg = command_orig.split(' ')[1:]
-            msg = ' '.join(msg)
-            self.sendMsgAll(msg)
+            mssg = command_orig.split(' ')[1:]
+            mssg = ' '.join(mssg)
+            self.sendMsgAll(mssg)
             time.sleep(0.5)
 
         # Comando para mandar mensajes a un jugador
@@ -783,9 +809,9 @@ class ScenioBot:
             if ID is None:
                 self.sendMaster(f'No conozco a {name}')
             else:
-                msg = command_orig.split(' ')[2:]
-                msg = ' '.join(msg)
-                self.sendMsg(name, msg)
+                mssg = command_orig.split(' ')[2:]
+                mssg = ' '.join(mssg)
+                self.sendMsg(name, mssg)
                 time.sleep(0.5)
 
         # Comando para ver un report de cada jugador
@@ -793,8 +819,8 @@ class ScenioBot:
             with open(STATE, 'r') as f:
                 state = json.load(f)
             for name in state:
-                msg = f'{name}: \n{CraftPersonalStatus(name)}\n'
-                self.sendMaster(msg)
+                mssg = f'{name}: \n{CraftPersonalStatus(name)}\n'
+                self.sendMaster(mssg)
                 time.sleep(0.2)
 
         # Comando para empezar el juego
@@ -816,13 +842,16 @@ class ScenioBot:
             if ID is None:
                 self.sendMaster(f'No conozco a {name}')
             else:
-                msg = command_orig.split(' ')[2:]
-                msg = ' '.join(msg)
-                self.sendMsg(name, msg)
+                mssg = command_orig.split(' ')[2:]
+                mssg = ' '.join(mssg)
+                self.sendMsg(name, mssg)
                 time.sleep(0.5)
 
 
 if __name__ == '__main__':
+    if not os.path.exists(PART_LIST):
+        with open(PART_LIST, 'w') as f:
+            json.dump({}, f)
     with open(TOKEN, 'r') as f:
         token = f.read().replace('\n', '')
         print('Token:', token)

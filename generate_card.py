@@ -1,6 +1,4 @@
 from PIL import Image, ImageDraw, ImageFont
-import numpy as np
-import cv2
 
 def format_text(text, Nmax=30, Nmin=20):
     words = text.split()
@@ -31,7 +29,7 @@ def format_message_with_linebreaks(message, Nmax=30, Nmin=20):
     formatted_segments = [format_text(segment, Nmax, Nmin) for segment in segments]
     return '\n'.join(formatted_segments)
 
-def generate_card(message, filename='tarjeta.png', font_path='arial.ttf'):
+def generate_card(message, filename='tarjeta.png', font_path='DejaVuSans.ttf'):
     message = format_message_with_linebreaks(message)
     width, height = 480, 720
     img = Image.new('RGB', (width, height), color='black')
@@ -54,8 +52,6 @@ def generate_card(message, filename='tarjeta.png', font_path='arial.ttf'):
 
     draw.multiline_text((text_x, text_y), message, font=font, fill=(255, 255, 255), spacing=10)
     
-    opencv_img = np.array(img)
-    opencv_img = cv2.cvtColor(opencv_img, cv2.COLOR_RGB2BGR)
-    cv2.imwrite(filename, opencv_img)
+    img.save(filename)
     
 
