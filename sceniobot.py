@@ -10,6 +10,7 @@ LOGFILE = 'log.txt'
 
 TOKEN = 'token_test.txt'
 MASTER = 574837872
+TEST = True
 
 
 
@@ -34,19 +35,42 @@ def AddPart(ID, name):
     with open(PART_LIST, 'r') as f: part_list = json.load(f)
     if str(ID) in part_list:
         return False
-    part_list[ID] = name
+    part_list[ID] = {'name':name, 'active':True}
     with open(PART_LIST, 'w') as f: json.dump(part_list, f)
     return True
 
-def GetPartName(ID):
+def UpdatePartStatus(ID, status):
+    ''' Actualiza el status de un participante '''
+    with open(PART_LIST, 'r') as f: part_list = json.load(f)
+    ID = GetPartID(ID)
+    if str(ID) not in part_list:
+        Log(f'No se puede actualizar el status de {ID}: no está en la lista', type='ERROR')
+        return False
+    part_list[ID]['active'] = status
+    with open(PART_LIST, 'w') as f: json.dump(part_list, f)
+    return True
+
+def GetPartName(ID, simple=False):
     ''' Obtiene el nombre de un participante '''
+    orname = str(ID)
     with open(PART_LIST, 'r') as f:
         part_list = json.load(f)
-    IDs, names = list(part_list.keys()), list(part_list.values())
-    if ID in names:
-        return ID # ID is actually the name	
+    IDs, names = list(part_list.keys()), [x['name'] for x in list(part_list.values())]
+    if ID in names: # ID is actually the name	
+        if simple and ' ' in ID:
+            return ID.split(' ')[0]
+        return ID 
     elif ID in IDs:
-        return part_list[ID]
+        name = part_list[ID]['name']
+        if simple and ' ' in name:
+            return name.split(' ')[0]
+        return name
+    for ID in IDs:
+        if part_list[ID]['name'].lower().startswith(orname.lower()):
+            name = part_list[ID]['name']
+            if simple and ' ' in name:
+                return name.split(' ')[0]
+            return name
     return None
 
 def GetPartID(name):
@@ -54,13 +78,16 @@ def GetPartID(name):
     with open(PART_LIST, 'r') as f:
         part_list = json.load(f)
     name = str(name)
-    IDs, names = list(part_list.keys()), list(part_list.values())
+    IDs, names = list(part_list.keys()), [x['name'] for x in list(part_list.values())]
     if name in IDs:
         return name # name is actually the ID
     elif name in names:
         for ID in part_list:
-            if part_list[ID] == name:
+            if part_list[ID]['name'] == name:
                 return ID
+    for ID in part_list:
+        if part_list[ID]['name'].startswith(name):
+            return ID
     return None
 
 ##########################################
@@ -70,7 +97,8 @@ def CreateGame():
     ''' Crea un juego nuevo '''
     with open(PART_LIST, 'r') as f:
         part_list = json.load(f)
-        npart = len(part_list)
+    partcipantes = [part_list[ID]['name'] for ID in part_list if part_list[ID]['active']]
+    npart = len(partcipantes)
     with open(MISIONS, 'rt', encoding='utf-8') as f:
         misions = f.readlines()
         misions_orig = misions.copy()
@@ -80,7 +108,6 @@ def CreateGame():
         random.shuffle(misions)
     skills = ['reencarnacion', 'posesion', 'venganza', 'intercambio', 'superviviente', 'redencion', 'traicion', 'fantasma', 'demonio', 'saboteador']
     state = {}
-    partcipantes = [part_list[ID] for ID in part_list]
     skills = skills*(len(partcipantes)//len(skills) + 1)
     random.shuffle(skills)
     for i, p in enumerate(partcipantes):
@@ -115,7 +142,7 @@ def ReencarnatePlayer(name, obj, asesino=None, mision=None):
     if mision is None:
         mision = GetANewRandomMision()
     with open(STATE, 'w') as f: json.dump(state, f)
-    Log(f'El jugador {name} se ha vuelo al juego, teniendo que matar a {obj}')
+    Log(f'El jugador {name} ha vuelto al juego, teniendo que matar a {obj}')
     return True
 
 def GetANewRandomMision(otherthan=None):
@@ -139,6 +166,20 @@ def GetAssasinsOf(obj):
             assasins.append(name)
     return assasins
 
+def SetObj(ase, obj):
+    ''' Reasigna un objetivo a un asesino '''
+    with open(STATE, 'r') as f: state = json.load(f)
+    if not state[ase]['status']: 
+        Log(f'No se puede reasignar el objetivo de {ase}: está muerto', type='ERROR')
+        return
+    if not state[obj]['status']:
+        Log(f'No se puede reasignar el objetivo de {ase}: {obj} está muerto', type='ERROR')
+        return
+    state[ase]['objetivo'] = obj
+    with open(STATE, 'w') as f: json.dump(state, f)
+    Log(f'Objetivo de {ase} reasignado a {obj}', type='EVT')
+    return True
+
 
 class GameUpdate:
 
@@ -150,6 +191,9 @@ class GameUpdate:
 
     def Msg(self, name, msg):
         ''' Envia un mensaje a un jugador '''
+        if TEST and (name.lower() != (GetPartName(str(MASTER)).lower())):
+            print(f'[{name}] ({GetPartName(str(MASTER))}) >> {msg}')
+            return
         self.bot.sendMsg(name, msg)
 
     def Img(self, name, imgpath):
@@ -161,6 +205,10 @@ class GameUpdate:
     def ReportedCompleteMision(self, name):
         ''' Un jugador reporta que ha completado la misión - se actualiza su etiqueta '''
         with open(STATE, 'r') as f: state = json.load(f)
+        if not name in state.keys():
+            self.Msg(name, "No estás en el juego!")
+            Log(f"{name} no está en el juego", type='ERROR')
+            return False
         if not state[name]['status']: return False
         state[name]['mision_done'] = True
         with open(STATE, 'w') as f: json.dump(state, f)
@@ -170,6 +218,10 @@ class GameUpdate:
     def ReportedDead(self, name, killed_by=None):
         ''' Un jugador reporta que ha muerto - se actualiza su etiqueta '''
         with open(STATE, 'r') as f: state = json.load(f)
+        if not name in state.keys():
+            self.Msg(name, "No estás en el juego!")
+            Log(f"{name} no está en el juego", type='ERROR')
+            return False
         if not state[name]['status']: return False
         state[name]['dead_report'] = True
         state[name]['killed_by'] = killed_by
@@ -185,6 +237,7 @@ class GameUpdate:
         if ase is not None:
             if not state[ase]['status']: return
             obj = state[ase]['objetivo']
+            Log(f'Check mision complete for ase {ase} -- has obj {obj}', type='EVT')
             if state[ase]['mision_done'] and state[obj]['dead_report']:
                 Log(f'Misión completada y reportada por el asesino {ase} y el objetivo {obj}', type='EVT')
                 self.Next(ase, obj)
@@ -204,34 +257,75 @@ class GameUpdate:
                 self.Next(ase, obj)
                 return True
             else:
-                Log(f'Falta por reportar uno de los dos: {ase}, {obj}', type='EVT')
+                Log(f'Falta por reportar uno de los dos: {assas}, {obj}', type='EVT')
                 return False
         else:
             return False 
 
     #################################
     ### Funciones para alguna de las habilidades
+    '''
     def Intercambio(self, obj):
-        ''' Produce un intercambio de obj por un random... return de ese random ''' 
+        # Produce un intercambio de obj por un random... return de ese random
         with open(STATE, 'r') as f: state = json.load(f)
         # A → B → C → … → W → X → Y → …
         As = GetAssasinsOf(obj)
         X = random.choice([name for name in state if state[name]['status'] and name != obj])
-        Y = state[X]['objetivo']
+        Log(f"El objetivo {obj} ha usado intercambio por el jugador X = {X}", type='HAB')
+        Y = str(state[X]['objetivo'])
         Ws = GetAssasinsOf(X)
-        B = obj
-        C = state[B]['objetivo']
+        B = str(obj)
+        C = str(state[B]['objetivo'])
         # A → X → C → … → W → B → Y → …  
-        state[X]['objetivo'] = C
+        state[X]['objetivo'] = str(C)
         self.Msg(X, f'¡ATECIÓN! Alguien ha usado una habilidad y ahora tu objetivo es {C}... ignora a tu anterior objetivo. La misión es la misma.')
         for W in Ws:
-            state[W]['objetivo'] = B
+            state[W]['objetivo'] = str(B)
             self.Msg(W, f"¡ATENCIÓN! Alguien ha usado una habilidad y ahora tu objetivo es {B}... ignora a tu anterior objetivo. La misión es la misma.")
-        state[obj]['objetivo'] = Y
-        self.Msg(B, f'Ahora tu objetivo es {obj}')
+        state[obj]['objetivo'] = str(Y)
+        self.Msg(B, f'Ahora tu objetivo es {Y}')
         # the state of ase is not changed in this function!
         with open(STATE, 'w') as f: json.dump(state, f)
         return X
+    '''
+
+    def AddNew(self, obj, X=None, veto=[]):
+        ''' Introduce a O en X el juego donde W -> X -> Y -> '''
+        with open(STATE, 'r') as f: state = json.load(f)
+        if isinstance(veto, str):
+            veto = [veto]
+        if X is None:
+            listOfCandidates = [name for name in state if state[name]['status'] and (name != obj) and (name not in veto)]
+            Log('List of candidates: ' + str(listOfCandidates), type='EVT')
+            X = random.choice(listOfCandidates)
+            Log(f"El objetivo {obj} se añade tras el jugador X = {X}", type='HAB')
+        # W -> X -> O -> Y -> ...
+        # Cambiamos el objetivo de X y le avisamos... su misión es la misma
+        Y = str(state[X]['objetivo'])
+        state[X]['objetivo'] = str(obj)
+        self.Msg(X, f"¡ATENCIÓN! Alguien ha usado una habilidad y ahora tu objetivo es {obj}... ignora a tu anterior objetivo. La misión es la misma.")
+
+        # Añadimos a X (si no está en el juego)
+        if not obj in state:
+            state[obj] = {'mision': GetANewRandomMision(), 'objetivo':Y, 'status':True, 'list_of_kills':[], 'killed_by':None, 'killed_by_mision':None, 'nmisions':0, 'n_mision_joker':3, 'skill':None, 'mision_done':False, 'dead_report':False, 'skill_avail':True, 'reencarnation':None}
+            self.Msg(obj, 'Bienvenido/a al juego!')
+            self.Msg(obj, "A continuación recibirás intrucciones básicas y, posteriormente, tu primera misión y objetivo. Asegúrate de que nadie más vea tu móvil, y no compartas esta información con nadie. ¡Suerte!")
+            instructions1, instructions2 = GetInstructions()
+            self.Msg(obj, instructions1)
+            time.sleep(0.5)
+            self.Msg(obj, instructions2)
+            time.sleep(0.5)
+        else:
+            state[obj]['objetivo'] = Y
+            state[obj]['status'] = True
+            state[obj]['mision_done'] = False
+            state[obj]['dead_report'] = False
+            state[obj]['skill_avail'] = False
+            state[obj]['killed_by'] = None
+            self.Msg(obj, f"¡ATENCIÓN! Alguien ha usado una habilidad y ahora tu objetivo es {Y}... ignora a tu anterior objetivo. La misión es la misma.")
+        # write state
+        with open(STATE, 'w') as f: json.dump(state, f)
+
 
     ################################
     ### Funciones del juego. Actualizan etiquetas de objetivos y misiones...
@@ -262,6 +356,7 @@ class GameUpdate:
         if killed_by is not None:
             state[name]['killed_by_mision'] = state[killed_by]['mision']
         with open(STATE, 'w') as f: json.dump(state, f)
+        self.Msg(name, f'¡Has muerto!')
         Log(f"{name} ha sido matado por {killed_by}... y ha sido finalmente declarado muerto", type='EVT')
         return None
 
@@ -273,22 +368,36 @@ class GameUpdate:
         # Comprobar si hay alguna reencarnacion
         sel_obj = None
         randomMision = False
+        traicion = False
+        ren = None
         if state[obj]['reencarnation'] is not None:
-            ren = state[obj]['reencarnation']
-            prev_obj = state[obj]['objetivo']
-            if state[obj][skill] == "traicion":
-                if not 'helping' in state[obj]:
-                    Log('No se ha encontrado el ayudante de {obj}...', type='ERROR')
+            ### Solo se hace la reencarnación si obj no tiene una actividad "especial" sin usar
+            if not state[obj]['skill_avail'] or not state[obj]['skill'] in ['redencion', 'traicion', 'posesion', 'reencarnacion', 'intercambio', 'superviviente']:
+                ren = state[obj]['reencarnation']
+                prev_obj = state[obj]['objetivo']
+                if state[ren]['skill'] == "traicion":
+                    if not 'helping' in state[ren]:
+                        Log('No se ha encontrado a quién ayuda {ren}...', type='ERROR')
+                    else:
+                        prev_obj = state[ren]['helping']
+                        traicion = state[obj]['objetivo'] 
+                        # change asof prev_obj to ren
                 else:
-                    prev_obj = state[obj]['helping']
+                    sel_obj = ren
+                time.sleep(0.1)
+                Log(f'Ha habido una reecarnacion, prev obj es {prev_obj} y ren es {ren}', type='HAB')
+                ReencarnatePlayer(ren, prev_obj)
+                self.Msg(ren, f'¡Has vuelto al juego!')
+                self.Msg(ren, CraftMisionMsg(ren))
+                # reload state
+                with open(STATE, 'r') as f: state = json.load(f)
             else:
-                sel_obj = ren
-            time.sleep(0.1)
-            ReencarnatePlayer(ren, prev_obj)
+                Log(f'Obj {obj} acaba de reportar muerte y tiene una reencarnación de {state[obj]["reencarnation"]} pero no se puede ejecutar ya que tiene la habilidad {state[obj]["skill"]} sin usar', type='EVT')
 
         # Primero, comprueba la skill del muerto y actualiza es state
         if state[obj]['skill_avail']:
-            state[obj]['skll_avail'] = False
+            Log(f"El objetivo {obj} tiene habilidad disponible ({state[obj]['skill']})", type='EVT')
+            state[obj]['skill_avail'] = False
             state[obj]['dead_report'] = False
             with open(STATE, 'w') as f: json.dump(state, f)
             skill = state[obj]['skill'].lower()
@@ -310,34 +419,20 @@ class GameUpdate:
                 self.Msg(obj, msg)
                 Log(f"El objetivo {obj} ha usado posesion y ahora {ase} está poseído.", type='HAB')
 
-            elif skill == 'venganza':
-                msg = "Acabas de morir. Tu habilidad especial es Venganza. El juego no ha acabado para ti. Tienes una nueva misión, encaminada a matar a tu asesino. Si lo consigues, podrás seguir jugando."
-                state[obj]['mision'] = GetANewRandomMision()
-                state[obj]['objetivo'] = ase
-                change_objs = GetAssasinsOf(ase)
-                for name in change_objs:
-                    state[name]['objetivo'] = obj
-                with open(STATE, 'w') as f: json.dump(state, f)
 
-                self.Msg(obj, msg)
-                self.Msg(obj, CraftMisionMsg(obj))
-                Log(f"El objetivo {obj} ha usado venganza y ahora tiene que matar a {ase}", type='HAB')
-                for name in change_objs:
-                    self.Msg(name, f"¡ATENCIÓN! El objetivo de tu misión ha cambiado. Ahora tiene que matar a {obj}.")
-                    self.Msg(name, CraftMisionMsg(name))
-                    Log(f"El objetivo {name} ha cambiado a {obj} (debido a un uso de venganza)", type='HAB')
 
             elif skill == 'intercambio':
-                msg = "Acabas de morir. Tu habilidad especial es Intercambio. En tu lecho de muerte tu espíritu se cambió con el de otra persona, aún viva. Tienes que terminar la misión de este personaje. Si lo logras, podrás seguir jugando."
-                state[obj]['mision'] = GetANewRandomMision()
-                with open(STATE, 'w') as f: json.dump(state, f)
-                some_random = self.Intercambio(obj)
-                self.Msg(obj, msg)
-                self.Msg(obj, CraftMisionMsg(obj))
-                Log(f"El objetivo {obj} ha usado intercambio y ha habido algunos cambios. El random es {some_random}", type='HAB')
+                msg = "Acabas de morir. Tu habilidad especial es Intercambio. En tu lecho de muerte tu espíritu se cambió con el de otra persona, aún viva. Sigues viva pero tienes que terminar la misión de este personaje. Si lo logras, podrás seguir jugando."
+                #self.CompleteMisionAndReport(ase, newObj=sel_obj, randomMision=randomMision)
+                # reload state
+                #some_random = self.Intercambio(obj)
 
-                sel_obj = some_random
-                
+                sel_obj = str(state[obj]['objetivo'])
+                self.Msg(obj, msg)
+                self.AddNew(obj, veto=[ase])
+                self.Msg(obj, CraftMisionMsg(obj))
+                Log(f"El objetivo {obj} ha usado intercambio y ha habido algunos cambios.", type='HAB')
+
             elif skill == 'superviviente':
                 msg = "Acabas de NO morir. Tu habilidad es Superviviente. Has sobrevivido. Pero no tendrás la misma suerte la próxima vez. Vigila tus espaldas, no sabes quién te va a querer matar ni cómo. No obstante, continúa con tu misión."
                 self.Msg(obj, msg)
@@ -359,7 +454,7 @@ class GameUpdate:
                 Log(f"El objetivo {obj} ha usado redencion y ahora tiene que ayudar a {to_help}", type='HAB')
 
             elif skill == 'traicion':
-                msg = "Acabas de morir. Sin embargo el juego no ha acabado para ti. Tu habilidad es Traición. Puedes ayudar al asesino de tu asesino a completar su misión. Si lo logras, deberás matar también al asesino de tu asesino, con una misión te será desvelada (¡él o ella no lo sabe!). Si lo logras, podrás continuar jugando."
+                msg = "Acabas de morir. Sin embargo el juego no ha acabado para ti. Tu habilidad es Traición. Puedes ayudar al asesino de tu asesino a completar su misión. Si lo logras, volverás al juego pero deberás matar también al asesino de tu asesino, con una misión te será desvelada (¡él o ella no lo sabe!). A partir de ese momento, podrás seguir jugando."
                 to_help = GetAssasinsOf(ase)[0]
                 state[ase]['reencarnation'] = obj
                 state[obj]['helping'] = to_help
@@ -370,6 +465,8 @@ class GameUpdate:
                 Log(f"El objetivo {obj} ha usado traicion y ahora tiene que ayudar a {to_help}", type='HAB')
 
             elif skill == 'fantasma':
+                state[obj]['status'] = False
+                with open(STATE, 'w') as f: json.dump(state, f)
                 msg = "Acabas de morir. Tu habilidad es Fantasma. Ya no puedes ganar el juego, pero puedes ayudar a que gane una persona. Si esa persona gana, podrás considerarlo una victoria moral por tu parte."
                 random_live = random.choice([name for name in state if state[name]['status'] and name != obj])
                 self.Msg(obj, msg)
@@ -383,6 +480,8 @@ class GameUpdate:
                 Log(f"El objetivo {obj} ha usado fantasma y ahora tiene que ayudar a {random_live}", type='HAB')
 
             elif skill == 'demonio':
+                state[obj]['status'] = False
+                with open(STATE, 'w') as f: json.dump(state, f)
                 msg = "Acabas de morir. Tu habilidad es Demonio. Ya no puedes ganar el juego, pero puedes continuar jugando un poco más. Hay dos personajes que siguen vivos, pero quieres cambiar esa situación. Ayúdalos a morir."
                 two_lives = [name for name in state if state[name]['status'] and name != obj]
                 random.shuffle(two_lives)
@@ -404,32 +503,47 @@ class GameUpdate:
                 self.Msg(obj, f'Recuerda que no sabes quiénes deben matar a {dem1} y a {dem2}, pero sabes qué misiones tienen que hacer... y tú tienes que ayudar a que se cumplan.')
                 self.Msg(obj, 'Buena suerte!')
                 Log(f"El objetivo {obj} ha usado demonio y ahora tiene que ayudar a matar a {dem1} y a {dem2}", type='HAB')
+
+            elif skill == 'venganza':
+                msg = "Acabas de morir. Tu habilidad especial es Venganza. Estando muerto, puedes tratar de matar a tu asesino."
+                self.Msg(obj, msg)
+                state[obj]['status'] = False
+                with open(STATE, 'w') as f: json.dump(state, f)
+                for _ase in GetAssasinsOf(ase):
+                    _mision = state[_ase]['mision']
+                    self.Msg(obj, f'El asesino de {ase} es {_ase}. Su misión es: {_mision}')
+                Log(f"El objetivo {obj} ha usado venganza y ahora tiene que ayudar a {GetAssasinsOf(ase)} a matar a {ase}", type='HAB')
                     
             elif skill == 'saboteador':
+                state[obj]['status'] = False
+                with open(STATE, 'w') as f: json.dump(state, f)
                 msg = "Acabas de morir. Tu habilidad es Saboteador. Ya no puedes ganar el juego, pero puedes continuar jugando un poco más. Como buen saboteador, te has enterado de estas misiones y vas a intentar sabotearlas. Apáñatelas como puedas, y mucha suete."
                 three_lives = [name for name in state if state[name]['status'] and name != obj]
                 random.shuffle(three_lives)
                 try:
                     dem1 = three_lives[0]
                     dem2 = three_lives[1]
-                    dem3 = three_lives[2]
+                    #dem3 = three_lives[2]
                     mis1 = state[dem1]['mision']
                     mis2 = state[dem2]['mision']
-                    mis3 = state[dem3]['mision']
+                    #mis3 = state[dem3]['mision']
                 except:
                     Log(f"El objetivo {obj} ha usado saboteador pero no se ha podido ejecutar", type='ERROR')
 
                 self.Msg(obj, msg)
-                self.Msg(obj, f'Tus objetivos para el resto del juego son fastidiar las misiones actuales de {dem1}, {dem2} y {dem3}. Eso sí, debes de hacerlo con sigilo... ellos no saben que tú les vas a chinchar.')
+                #self.Msg(obj, f'Tus objetivos para el resto del juego son fastidiar las misiones actuales de {dem1}, {dem2} y {dem3}. Eso sí, debes de hacerlo con sigilo... ellos no saben que tú les vas a chinchar.')
+                self.Msg(obj, f'Tus objetivos para el resto del juego son fastidiar las misiones actuales de {dem1} y {dem2}. Eso sí, debes de hacerlo con sigilo... ellos no saben que tú les vas a chinchar.')
                 self.Msg(obj, f'La misión de {dem1} es:')
                 self.Msg(obj, mis1)
                 self.Msg(obj, f'La misión de {dem2} es:')
                 self.Msg(obj, mis2)
-                self.Msg(obj, f'La misión de {dem3} es:')
-                self.Msg(obj, mis3)
-                self.Msg(obj, f'Recuerda que no sabes quiénes deben matar a {dem1}, {dem2} y {dem3}, pero sabes qué misiones tienen que hacer... y tú tienes que ayudar a que no se cumplan.')
+                #self.Msg(obj, f'La misión de {dem3} es:')
+                #self.Msg(obj, mis3)
+                #self.Msg(obj, f'Recuerda que no sabes quiénes deben matar a {dem1}, {dem2} y {dem3}, pero sabes qué misiones tienen que hacer... y tú tienes que ayudar a que no se cumplan.')
+                self.Msg(obj, f'Recuerda que no sabes quiénes deben matar a {dem1} y {dem2}, pero sabes qué misiones tienen que hacer... y tú tienes que ayudar a que no se cumplan.')
                 self.Msg(obj, 'Buena suerte!')
-                Log(f"El objetivo {obj} ha usado saboteador y ahora tiene que sabotear a {dem1}, {dem2} y {dem3}", type='HAB')
+                #Log(f"El objetivo {obj} ha usado saboteador y ahora tiene que sabotear a {dem1}, {dem2} y {dem3}", type='HAB')
+                Log(f"El objetivo {obj} ha usado saboteador y ahora tiene que sabotear a {dem1} y {dem2}", type='HAB')
 
             self.CompleteMisionAndReport(ase, newObj=sel_obj, randomMision=randomMision)
 
@@ -440,6 +554,7 @@ class GameUpdate:
 
             self.CompleteMisionAndReport(ase, newObj=sel_obj, randomMision=randomMision)
         self.CheckAndReport()
+        if traicion: SetObj(traicion, ren)
             
     #########################################################
     ### Otras funciones del juego 
@@ -478,6 +593,10 @@ class GameUpdate:
     def Joker(self, name):
         ''' Cambia la misión y resta un joker '''
         with open(STATE, 'r') as f: state = json.load(f)
+        if not name in state.keys():
+            self.Msg(name, "No estás en el juego!")
+            Log(f"{name} no está en el juego")
+            return
         if not state[name]['status']: 
             self.Msg(name, "Estás muerto!")
             return
@@ -541,7 +660,8 @@ def CraftPersonalStatus(name):
     if not name in state:
         return "No estás en la lista de jugadores"
     stad = state[name]
-    msg = f'¡Hola, {name}!\n'
+    sname = name if not ' ' in name else name.split(' ')[0]
+    msg = f'¡Hola, {sname}!\n'
     if stad['status']:
         msg += "Estás vivo\n"
         msg += f"Te quedan {stad['n_mision_joker']} comodines\n"
@@ -553,8 +673,10 @@ def CraftPersonalStatus(name):
             msg += f"Hasta ahora matado a:\n{stad['list_of_kills']}\n"
     else:
         msg += "Estás muerto\n"
-        msg += f"Has sido matado por {stad['killed_by']}\n"
-        msg += f"Su misión era: {stad['killed_by_mision']}\n"
+        if stad['killed_by'] is not None:
+            msg += f"Has sido matado por {stad['killed_by']}\n"
+        if stad['killed_by_mision'] is not None:
+            msg += f"Su misión era: {stad['killed_by_mision']}\n"
         msg += f"Has completado {stad['nmisions']} misiones\n"
         if len(stad['list_of_kills']) > 0:
             msg += f"Has matado a:\n{stad['list_of_kills']}\n"
@@ -657,12 +779,14 @@ class ScenioBot:
   def sendMsg(self, ID, msg):
     ID = GetPartID(ID)
     name = GetPartName(ID)
+    if TEST and ID != str(self.master): return
     self.bot.sendMessage(ID, msg)
     Log(f'Message sent to {name}: {msg}', type='MSG')
 
   def sendImg(self, ID, imgpath):
     ID = GetPartID(ID)
     name = GetPartName(ID)
+    if TEST and ID != str(self.master): return
     with open(imgpath, 'rb') as f:
         self.bot.sendPhoto(ID, f)
     Log(f'Image sent to {name}: {imgpath}', type='MSG')
@@ -671,6 +795,7 @@ class ScenioBot:
     with open(PART_LIST, 'r') as f:
         part_list = json.load(f)
     for ID in part_list:
+        if TEST and ID != str(self.master): continue
         self.bot.sendMessage(ID, msg)
         time.sleep(0.3)
     Log(f'Message sent to all participants: {msg}', type='MSG')
@@ -684,37 +809,43 @@ class ScenioBot:
     command_orig = msg['text']
     command =  msg['text'].lower().replace(' ', '')
     name = self.bot.getChat(chat_id)['first_name']
+    username = self.bot.getChat(chat_id)['username']
+    name = f"{name} (@{username})"
     Log(f'Got command: {command}', type='CMD', name=name)
     self.interpret(chat_id, command_orig, command)
 
   def interpret(self, chat_id, command_orig, command):
+    Log(f'Interpreting command: {command} for ID {chat_id}', type='CMD')
     name = self.bot.getChat(chat_id)['first_name']
+    username = self.bot.getChat(chat_id)['username']
+    name = f"{name} (@{username})"
     if command in ['/start', 'start']:
         alreadyInList = AddPart(chat_id, name)
+        sname = name if not ' ' in name else name.split(' ')[0]
         if not alreadyInList:
             Log(f'Participante {name} ya está en la lista', type='EVT')
-            self.bot.sendMessage(chat_id, f'Ya estás en la lista, {name}')
+            self.bot.sendMessage(chat_id, f'Ya estás en la lista, {sname}')
         else:
             Log(f'Participante {name} añadido a la lista', type='EVT')
-            self.bot.sendMessage(chat_id, f'¡Bienvenido a ScenioBOT, {name}!')
+            self.bot.sendMessage(chat_id, f'¡Bienvenido a ScenioBOT, {sname}!')
     command = command.lower().replace(' ', '').replace('á', 'a').replace('é', 'e').replace('í', 'i').replace('ó', 'o').replace('ú', 'u')
        
     # Comandos de juego
     ################################################################
     # Comando para anunciar que has completado la misión
-    if command in ['completado', 'completada', 'misioncompletado', 'misioncompletada']:
+    if command in ['completado', 'completada', 'misioncompletado', 'misioncompletada', 'misioncompleta', 'misioncumplida']:
         isok = self.game.ReportedCompleteMision(name)
         if isok:
-            self.game.CheckMisionCompleted(ase=name)
-            self.bot.sendMessage(chat_id, "Gracias por reportar que has completado tu misión. Recuerda que tu objetivo también tiene que reportar su muerte. Pronto tendrás noticias mías.")
+            completed = self.game.CheckMisionCompleted(ase=name)
+            if not completed: self.bot.sendMessage(chat_id, "Gracias por reportar que has completado tu misión. Recuerda que tu objetivo también tiene que reportar su muerte. Pronto tendrás noticias mías.")
             time.sleep(0.5)
 
     # Comando para anunciar que estás muerto
     if command in ['muerto', 'muerta', 'matado', 'matada', 'asesinado', 'asesinada', 'kill', 'killed']:
         isok = self.game.ReportedDead(name)
         if isok:
-            self.game.CheckMisionCompleted(obj=name)
-            self.bot.sendMessage(chat_id, "Gracias por reportar que te han matado. Recuerda que tu asesino también tiene que reportar que ha completado su misión. Proto te daré noticias.")
+            completed = self.game.CheckMisionCompleted(obj=name)
+            if not completed: self.bot.sendMessage(chat_id, "Gracias por reportar que te han matado. Recuerda que tu asesino también tiene que reportar que ha completado su misión. Pronto te daré noticias.")
             time.sleep(0.5)
 
     # Comando para anunciar que te retiras
@@ -762,7 +893,12 @@ class ScenioBot:
             parts = command_orig.split(' ')
             if len(parts) < 3: return
             name = parts[1]
+            Log(f'Pretend name: {name}', type='CMD', name=name)
             chat_id = GetPartID(name)
+            Log(f'Pretend chat_id: {chat_id}', type='CMD', name=name)
+            if chat_id is None:
+                self.sendMaster(f'No conozco a {name}!')
+                return
             com = parts[2:]
             com = ' '.join(com)
             command =  com.lower().replace(' ', '')
@@ -836,6 +972,14 @@ class ScenioBot:
             self.game.InformEveryone()
             time.sleep(0.5)
 
+        elif command in ['skills']:
+            with open(STATE, 'r') as f:
+                state = json.load(f)
+            for name in state:
+                if state[name]['status']:
+                    self.sendMaster(f'{name}: {state[name]["skill"]} ({state[name]["skill_avail"]})')
+                    time.sleep(0.5)
+
         elif command_orig.startswith('to '):
             name = command_orig.split(' ')[1]
             ID = GetPartID(name)
@@ -846,6 +990,139 @@ class ScenioBot:
                 mssg = ' '.join(mssg)
                 self.sendMsg(name, mssg)
                 time.sleep(0.5)
+
+        elif command_orig.startswith('active'):
+            name = command_orig.split(' ')[1]
+            ID = GetPartID(name)
+            if ID is None:
+                self.sendMaster(f'No conozco a {name}')
+            else:
+                status = command_orig.split(' ')[2]
+                status = False if status.lower() in ['false', 'f', 'no', 'n', '0'] else True
+                Log(f'Changing status of {name} to {status}', type='CMD', name=name)
+                UpdatePartStatus(name, status)
+                time.sleep(0.5)
+
+        elif command_orig.startswith('asof '):
+            name = command_orig.split(' ')[1]
+            name = GetPartName(name)
+            las = GetAssasinsOf(name)
+            if len(las) == 0:
+                self.sendMaster(f'{name} no tiene asesinos')
+                Log(f'{name} no tiene asesinos', type='CMD', name=name)
+            else:
+                self.sendMaster(f'Los asesinos de {name} son: {las}')
+                Log(f'Los asesinos de {name} son: {las}', type='CMD', name=name)
+            time.sleep(0.5)
+
+        elif command_orig.startswith('explore '):
+            name = command_orig.split(' ')[1]
+            name = GetPartName(name)
+            # open status and send it
+            with open(STATE, 'r') as f:
+                state = json.load(f)
+            if not name in state:
+                self.sendMaster(f'No conozco a {name}')
+            else:
+                self.sendMaster(f'{name}: {state[name]}')
+            time.sleep(0.5)
+
+        elif command_orig.startswith('set '):
+            parts = command_orig.split(' ')
+            if len(parts) < 4: 
+                self.sendMaster('Comando incorrecto (set property name value)')
+                return
+            prop = parts[1]
+            name = parts[2]
+            value = parts[3]
+            name = GetPartName(name)
+            with open(STATE, 'r') as f:
+                state = json.load(f)
+            if not name in state:
+                self.sendMaster(f'No conozco a {name}')
+            else:
+                if not prop in state[name]:
+                    self.sendMaster(f'No conozco la propiedad {prop}')
+                else:
+                    state[name][prop] = value
+                    with open(STATE, 'w') as f:
+                        json.dump(state, f)
+                    self.sendMaster(f'{name}: {state[name]}\n(propiedad {prop} cambiada a {value})')
+
+        elif command_orig.startswith('add '):
+            parts = command_orig.split(' ')
+            if len(parts) < 2:
+                self.sendMaster('Comando incorrecto (add name)')
+                return
+            name = parts[1:]
+            name = ' '.join(name)
+            # check name is in the part_list
+            with open(PART_LIST, 'r') as f:
+                part_list = json.load(f)
+            name = GetPartName(name)
+            names = [x['name'] for x in part_list.values()]
+            if not name in names:
+                self.sendMaster(f'No conozco a {name}')
+                return
+            # check name is not in the state
+            with open(STATE, 'r') as f:
+                state = json.load(f)
+            if name in state:
+                self.sendMaster(f'{name} ya está en el juego')
+                return
+            # add to game used AddNew
+            self.game.AddNew(name)
+            self.sendMaster(f'{name} añadido al juego')
+            time.sleep(0.5)
+
+        elif command_orig.startswith('remove '):
+            parts = command_orig.split(' ')
+            if len(parts) < 2:
+                self.sendMaster('Comando incorrecto (remove name)')
+                return
+            name = parts[1:]
+            name = ' '.join(name)
+            name = GetPartName(name)
+            # check name is in the game
+            with open(STATE, 'r') as f:
+                state = json.load(f)
+            if not name in state:
+                self.sendMaster(f'No conozco a {name}')
+                return
+            # check is is alive
+            elif state[name]['status']:
+                self.sendMaster(f'{name} está vivo!! Mátalo antes si quieres quitarlo...')
+                return
+            # remove from state and save
+            del state[name]
+            with open(STATE, 'w') as f:
+                json.dump(state, f)
+            self.sendMaster(f'{name} eliminado del juego')
+            time.sleep(0.5)
+            
+        elif command_orig.startswith('command') or command_orig.startswith('help'):
+            # print master commands
+            self.sendMaster('''
+            Comandos del master:\n
+            [list] Lista de participantes\n
+            [info name] Información de un participante\n
+            [global] Estado global del juego\n
+            [msgall message] Enviar un mensaje a todos los participantes\n
+            [msg name message] Enviar un mensaje a un participante\n
+            [report] Report de cada jugador\n
+            [startgame] Empezar el juego\n
+            [skills] Habilidades de cada jugador\n
+            [to name message] Enviar un mensaje a un participante\n
+            [active name status] Cambiar el estado de un participante\n
+            [asof name] Asesinos de un participante\n
+            [explore name] Explorar el estado de un participante\n
+            [set property name value] Cambiar una propiedad de un participante\n
+            [add name] Añadir un participante al juego\n
+            [remove name] Eliminar un participante del juego\n
+            ''')
+
+        ### Comando para añadir a alguien al juego en mitad de la partid
+        ### Se usa para añadir a gente que se ha apuntado tarde
 
 
 if __name__ == '__main__':
